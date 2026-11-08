@@ -96,7 +96,13 @@ impl CredentialProvider for ExampleProvider {
         };
 
         match result {
-            Some(cred) => LookupResult::Found(cred.clone()),
+            Some(cred) => LookupResult::Found {
+                credential: cred.clone(),
+                item_name: Some(format!(
+                    "Example login ({})",
+                    cred.domain.as_deref().unwrap_or("unknown")
+                )),
+            },
             None => LookupResult::NotFound,
         }
     }
@@ -111,7 +117,9 @@ mod tests {
         let provider = ExampleProvider::new();
         let result = provider.lookup(&CredentialQuery::Domain("example.com".to_string()));
         match result {
-            LookupResult::Found(cred) => {
+            LookupResult::Found {
+                credential: cred, ..
+            } => {
                 assert_eq!(cred.username.as_deref(), Some("alice@example.com"));
                 assert_eq!(cred.domain.as_deref(), Some("example.com"));
             }
@@ -124,7 +132,9 @@ mod tests {
         let provider = ExampleProvider::new();
         let result = provider.lookup(&CredentialQuery::Domain("google.com".to_string()));
         match result {
-            LookupResult::Found(cred) => {
+            LookupResult::Found {
+                credential: cred, ..
+            } => {
                 assert_eq!(cred.username.as_deref(), Some("example@gmail.com"));
                 assert!(cred.totp.is_some(), "google should have TOTP");
             }
@@ -137,7 +147,9 @@ mod tests {
         let provider = ExampleProvider::new();
         let result = provider.lookup(&CredentialQuery::Domain("github.com".to_string()));
         match result {
-            LookupResult::Found(cred) => {
+            LookupResult::Found {
+                credential: cred, ..
+            } => {
                 assert_eq!(cred.username.as_deref(), Some("example-dev"));
             }
             other => panic!("expected Found, got {other:?}"),
@@ -149,7 +161,9 @@ mod tests {
         let provider = ExampleProvider::new();
         let result = provider.lookup(&CredentialQuery::Id("cred-github-001".to_string()));
         match result {
-            LookupResult::Found(cred) => {
+            LookupResult::Found {
+                credential: cred, ..
+            } => {
                 assert_eq!(cred.domain.as_deref(), Some("github.com"));
             }
             other => panic!("expected Found, got {other:?}"),
@@ -161,7 +175,9 @@ mod tests {
         let provider = ExampleProvider::new();
         let result = provider.lookup(&CredentialQuery::Search("example-dev".to_string()));
         match result {
-            LookupResult::Found(cred) => {
+            LookupResult::Found {
+                credential: cred, ..
+            } => {
                 assert_eq!(cred.domain.as_deref(), Some("github.com"));
             }
             other => panic!("expected Found, got {other:?}"),
@@ -179,7 +195,7 @@ mod tests {
     fn lookup_case_insensitive() {
         let provider = ExampleProvider::new();
         let result = provider.lookup(&CredentialQuery::Domain("GITHUB.COM".to_string()));
-        assert!(matches!(result, LookupResult::Found(_)));
+        assert!(matches!(result, LookupResult::Found { .. }));
     }
 
     #[test]

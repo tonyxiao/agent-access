@@ -33,7 +33,10 @@ pub enum ProviderStatus {
 #[derive(Debug)]
 pub enum LookupResult {
     /// A credential was found.
-    Found(CredentialData),
+    Found {
+        credential: CredentialData,
+        item_name: Option<String>,
+    },
     /// No matching credential exists.
     NotFound,
     /// The provider is not ready (e.g. vault locked).
@@ -138,7 +141,10 @@ mod tests {
 
         fn lookup(&self, query: &CredentialQuery) -> LookupResult {
             match self.credentials.get(query.search_string()) {
-                Some(cred) => LookupResult::Found(cred.clone()),
+                Some(cred) => LookupResult::Found {
+                    credential: cred.clone(),
+                    item_name: None,
+                },
                 None => LookupResult::NotFound,
             }
         }
@@ -189,7 +195,9 @@ mod tests {
     fn mock_lookup_found() {
         let provider = MockProvider::new().with_credential("example.com", sample_credential());
         match provider.lookup(&CredentialQuery::Domain("example.com".to_string())) {
-            LookupResult::Found(cred) => {
+            LookupResult::Found {
+                credential: cred, ..
+            } => {
                 assert_eq!(cred.username.as_deref(), Some("alice"));
                 assert_eq!(cred.password.as_deref().map(String::as_str), Some("s3cret"));
             }

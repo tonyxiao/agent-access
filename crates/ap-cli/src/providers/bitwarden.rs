@@ -33,6 +33,7 @@ struct BwUri {
 /// Bitwarden CLI item structure.
 #[derive(Deserialize)]
 struct BwItem {
+    name: Option<String>,
     id: Option<String>,
     login: Option<BwLogin>,
 }
@@ -149,7 +150,11 @@ fn looks_like_session_key(input: &str) -> bool {
 }
 
 /// Look up a credential from the Bitwarden CLI.
-fn lookup_credential(bw: &str, search: &str, session: Option<&str>) -> Option<CredentialData> {
+fn lookup_credential(
+    bw: &str,
+    search: &str,
+    session: Option<&str>,
+) -> Option<(CredentialData, Option<String>)> {
     let mut cmd = Command::new(bw);
     cmd.args(["get", "item", search]);
     if let Some(key) = session {
@@ -176,15 +181,18 @@ fn lookup_credential(bw: &str, search: &str, session: Option<&str>) -> Option<Cr
 
     let domain = uri.as_deref().and_then(domain_from_uri);
 
-    Some(CredentialData {
-        username: login.username,
-        password: login.password.map(Zeroizing::new),
-        totp: login.totp,
-        uri,
-        notes: None,
-        credential_id: item.id,
-        domain,
-    })
+    Some((
+        CredentialData {
+            username: login.username,
+            password: login.password.map(Zeroizing::new),
+            totp: login.totp,
+            uri,
+            notes: None,
+            credential_id: item.id,
+            domain,
+        },
+        item.name,
+    ))
 }
 
 /// Extract the domain (host) from a URI string, e.g. `https://example.com/path` → `example.com`.
@@ -286,7 +294,10 @@ impl CredentialProvider for BitwardenProvider {
         let search = query.search_string();
 
         match lookup_credential(bw, search, self.session.as_ref().map(|s| s.expose_secret())) {
-            Some(cred) => LookupResult::Found(cred),
+            Some((credential, item_name)) => LookupResult::Found {
+                credential,
+                item_name,
+            },
             None => {
                 // When there's no cached session the vault might still be unlocked
                 // natively (e.g. via BW_SESSION in the shell). Check `bw status`

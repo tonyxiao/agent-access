@@ -464,7 +464,8 @@ impl App {
         // Determine input panel height based on mode
         let input_height = match &self.mode {
             Mode::TextInput => 3,
-            Mode::Confirm { .. } | Mode::CredentialConfirm { .. } => 6,
+            Mode::Confirm { .. } => 6,
+            Mode::CredentialConfirm { .. } => 9,
             Mode::Pick { options, .. } => (options.len() as u16) + 2, // border + items
         };
 
@@ -712,6 +713,7 @@ impl App {
                     ]),
                 ];
                 let confirm_widget = Paragraph::new(lines)
+                    .wrap(Wrap { trim: false })
                     .block(Block::default().borders(Borders::ALL).title(" Approve "));
                 frame.render_widget(confirm_widget, area);
             }
@@ -818,6 +820,40 @@ pub async fn wait_for_keypress(reader: &mut crossterm::event::EventStream) {
     while let Some(Ok(crossterm::event::Event::Key(key))) = reader.next().await {
         if key.kind == KeyEventKind::Press {
             break;
+        }
+    }
+}
+
+#[cfg(test)]
+mod approval_layout_tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn long_vault_names_keep_account_and_approval_choices_visible() {
+        let mut app = App::new();
+        app.set_mode(Mode::CredentialConfirm {
+            title: "Send Microsoft / Office 365 / Xbox / Windows / Live / Skype / Outlook / OneDrive — alice@example.com to Mail Setup?".into(),
+            description: Line::from("Website: https://login.live.com"),
+            auto_approve_minutes: 10,
+        });
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let text = (0..24)
+            .map(|y| (0..80).map(|x| buffer[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for visible in [
+            "Microsoft",
+            "OneDrive",
+            "alice@example.com",
+            "Mail Setup?",
+            "Website:",
+            "[y]",
+            "[n]",
+        ] {
+            assert!(text.contains(visible), "missing {visible}:\n{text}");
         }
     }
 }

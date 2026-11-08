@@ -138,11 +138,34 @@ enum Phase {
     CredentialApproval {
         query: ap_client::CredentialQuery,
         credential: CredentialData,
+        label: String,
         identity: ap_relay_protocol::IdentityFingerprint,
         reply: oneshot::Sender<CredentialRequestReply>,
     },
     /// Waiting for the user to enter unlock input (password or session key).
     UnlockInput,
+}
+
+/// Identify the vault item independently of its shared website URI.
+fn credential_label(
+    item_name: Option<&str>,
+    username: Option<&str>,
+    query: &ap_client::CredentialQuery,
+) -> String {
+    let clean = |value: &str| {
+        value
+            .chars()
+            .filter(|ch| !ch.is_control())
+            .collect::<String>()
+    };
+    let name = item_name
+        .filter(|name| !name.trim().is_empty())
+        .map(clean)
+        .unwrap_or_else(|| clean(query.search_string()));
+    match username.filter(|username| !username.trim().is_empty()) {
+        Some(username) => format!("{name} — {}", clean(username)),
+        None => name,
+    }
 }
 
 /// Whether the event loop exited normally or because `/pair` was requested.
@@ -424,8 +447,7 @@ async fn run_event_loop(
                                 // Credential approval
                                 (Phase::CredentialApproval { .. }, AppAction::CredentialConfirmed(approval)) => {
                                     let old_phase = std::mem::replace(&mut phase, Phase::Idle);
-                                    if let Phase::CredentialApproval { query, credential, identity, reply } = old_phase {
-                                        let label = credential.domain.clone().unwrap_or_else(|| query.to_string());
+                                    if let Phase::CredentialApproval { query, credential, label, identity, reply } = old_phase {
                                         let cred_id = credential.credential_id.clone();
                                         if matches!(approval, CredentialApproval::Deny) {
                                             let _ = reply.send(CredentialRequestReply {
@@ -554,8 +576,8 @@ async fn run_event_loop(
                             // Check auto-approval cache first
                             if approval_cache.is_approved(&identity, &query) {
                                 match provider.lookup(&query) {
-                                    LookupResult::Found(credential) => {
-                                        let label = credential.domain.clone().unwrap_or_else(|| query.to_string());
+                                    LookupResult::Found { credential, item_name } => {
+                                        let label = credential_label(item_name.as_deref(), credential.username.as_deref(), &query);
                                         let cred_id = credential.credential_id.clone();
                                         let _ = reply.send(CredentialRequestReply {
                                             approved: true,
@@ -585,11 +607,11 @@ async fn run_event_loop(
                                 ));
 
                                 match provider.lookup(&query) {
-                                    LookupResult::Found(credential) => {
-                                        let domain = credential.domain.clone().unwrap_or_else(|| query.to_string());
+                                    LookupResult::Found { credential, item_name } => {
+                                        let label = credential_label(item_name.as_deref(), credential.username.as_deref(), &query);
                                         let found_msg = format!(
                                             "Found: {} ({})",
-                                            credential.username.as_deref().unwrap_or("no username"),
+                                            label,
                                             credential.uri.as_deref().unwrap_or("no uri")
                                         );
                                         app.push_msg(MessageKind::Info, found_msg);
@@ -608,15 +630,17 @@ async fn run_event_loop(
                                                 })
                                             })
                                             .unwrap_or_else(|| "unknown device".to_string());
+                                        let website = credential.uri.clone().unwrap_or_else(|| "(none)".to_string());
                                         phase = Phase::CredentialApproval {
                                             query,
+                                            label: label.clone(),
                                             credential,
                                             identity,
                                             reply,
                                         };
                                         app.set_mode(Mode::CredentialConfirm {
-                                            title: format!("Send credential for {domain} to {device_label}?"),
-                                            description: Line::from(""),
+                                            title: format!("Send {label} to {device_label}?"),
+                                            description: Line::from(format!("Website: {website}")),
                                             auto_approve_minutes: 10,
                                         });
                                         app.footer = Line::from(
@@ -850,4 +874,42 @@ async fn run_user_client_loop(
     restore_terminal();
     println!("\nUser client session ended.");
     Ok(())
+}
+
+#[cfg(test)]
+mod item_label_tests {
+    use super::credential_label;
+    use ap_client::CredentialQuery;
+
+    #[test]
+    fn distinguishes_items_on_the_same_website() {
+        let query = CredentialQuery::Domain("accounts.google.com".into());
+        assert_eq!(
+            credential_label(Some("Personal Google"), Some("personal@gmail.com"), &query),
+            "Personal Google — personal@gmail.com"
+        );
+        assert_eq!(
+            credential_label(Some("Work Google"), Some("work@example.com"), &query),
+            "Work Google — work@example.com"
+        );
+    }
+
+    #[test]
+    fn supports_item_id_queries_and_missing_metadata() {
+        let query = CredentialQuery::Id("item-123".into());
+        assert_eq!(
+            credential_label(Some("Work Google"), None, &query),
+            "Work Google"
+        );
+        assert_eq!(credential_label(Some(" "), None, &query), "item-123");
+    }
+
+    #[test]
+    fn keeps_vault_metadata_on_one_display_line() {
+        let query = CredentialQuery::Domain("example.com".into());
+        assert_eq!(
+            credential_label(Some("Work\nGoogle"), Some("name\r@example.com"), &query),
+            "WorkGoogle — name@example.com"
+        );
+    }
 }
